@@ -1,0 +1,167 @@
+flowchart TD
+    %% ─────────────────────────────────────────
+    %% 金融风控 ML 模型选择流程
+    %% ─────────────────────────────────────────
+
+    START([开始：金融风控建模需求]) --> S0
+
+    %% ══════════════════════════════════════════
+    %% STEP 0: 业务目标与运营约束
+    %% ══════════════════════════════════════════
+    subgraph S0_BOX["Step 0 ── 业务目标与运营约束"]
+        direction TB
+        S0["业务目标与运营约束\n三个关键问题"]
+
+        S0 --> Q1{"误报 vs 漏报\n哪个代价更高？"}
+        Q1 -->|"费用报销场景"| OPT_P["优化 Precision\n（控制误报）"]
+        Q1 -->|"反欺诈 / 合规场景"| OPT_R["优化 Recall\n（控制漏报）"]
+
+        OPT_P & OPT_R --> Q2{"审核团队\n日处理量？"}
+        Q2 --> CAP["决定阈值上限\n→ 先对齐运营容量再定阈值⚠️"]
+
+        CAP --> Q3{"监管 / 审计\n硬性要求？"}
+        Q3 -->|"有"| HARD_XAI["可解释性硬约束\n排除黑盒模型"]
+        Q3 -->|"无"| TRADEOFF["可在效果与\n解释性间权衡"]
+    end
+
+    HARD_XAI & TRADEOFF --> S1
+
+    %% ══════════════════════════════════════════
+    %% STEP 1: 数据就绪度评估
+    %% ══════════════════════════════════════════
+    subgraph S1_BOX["Step 1 ── 数据就绪度评估"]
+        direction TB
+        S1["检查：可用特征数量 / 缺失率\n时间字段可靠性 / 类别特征基数 / 稀疏度"]
+
+        S1 --> D_FEAT{"特征数量\n与质量"}
+        D_FEAT -->|"特征 < 5\n且质量差"| RULE_ONLY["仅使用规则引擎\n退出建模流程 🚫"]
+        D_FEAT -->|"特征 5–15"| FEW_FEAT["可建模\n限制模型复杂度"]
+        D_FEAT -->|"特征 > 15\n且质量好"| RICH_FEAT["无限制\n可选高复杂度模型"]
+    end
+
+    RULE_ONLY --> RULE_AUDIT["直接送人工审核"]
+    FEW_FEAT & RICH_FEAT --> S2
+
+    %% ══════════════════════════════════════════
+    %% STEP 2: 标签状态
+    %% ══════════════════════════════════════════
+    subgraph S2_BOX["Step 2 ── 标签状态评估"]
+        direction TB
+        S2{"标签状态？"}
+        S2 -->|"有审核确认标签"| SUP["监督学习路径"]
+        S2 -->|"弱标签（疑似未确认）"| SEMI["半监督路径\n伪标签 + 置信度过滤"]
+        S2 -->|"无标注"| UNSUP["无监督路径"]
+    end
+
+    SUP --> S3_SUP
+    SEMI --> S3_SEMI
+    UNSUP --> S3_UNSUP
+
+    %% ══════════════════════════════════════════
+    %% STEP 3: 数据量与不平衡联合评估
+    %% ══════════════════════════════════════════
+    subgraph S3_BOX["Step 3 ── 数据量 × 不平衡联合评估"]
+        direction TB
+
+        %% --- 监督路径 ---
+        S3_SUP["监督路径：评估不平衡程度"]
+        S3_SUP --> IMB{"异常率？"}
+
+        IMB -->|"5%–20%\n轻度不平衡"| IMB_MILD["class_weight='balanced'"]
+        IMB -->|"1%–5%\n中度不平衡"| IMB_MOD["SMOTE + class_weight"]
+        IMB -->|"< 1%\n严重不平衡"| IMB_SEV["⚠️ 勿直接纯监督！\nIsolation Forest 初筛\n→ 监督精排（关键反直觉规则）"]
+
+        IMB_MILD & IMB_MOD & IMB_SEV --> VOL_SUP{"数据量"}
+        VOL_SUP -->|"< 5K"| M_SUP_S["评分卡（WOE+LR）"]
+        VOL_SUP -->|"5K – 10万"| M_SUP_M["XGBoost + SHAP"]
+        VOL_SUP -->|"> 10万"| M_SUP_L["GBDT + LR 双层\n/ 深度模型"]
+
+        %% --- 半监督路径 ---
+        S3_SEMI["半监督路径：跳过不平衡检查"]
+        S3_SEMI --> VOL_SEMI{"数据量"}
+        VOL_SEMI -->|"< 5K"| M_SEMI_S["标签传播 + LR"]
+        VOL_SEMI -->|"5K – 10万"| M_SEMI_M["Self-Training\n+ XGBoost"]
+        VOL_SEMI -->|"> 10万"| M_SEMI_L["半监督 GNN\n/ 伪标签迭代"]
+
+        %% --- 无监督路径 ---
+        S3_UNSUP["无监督路径：仅评估数据量"]
+        S3_UNSUP --> VOL_UNSUP{"数据量"}
+        VOL_UNSUP -->|"< 5K"| M_UNSUP_S["IF + LOF"]
+        VOL_UNSUP -->|"5K – 10万"| M_UNSUP_M["IF + LOF\n/ DBSCAN"]
+        VOL_UNSUP -->|"> 10万"| M_UNSUP_L["Autoencoder\n/ DAGMM"]
+    end
+
+    M_SUP_S & M_SUP_M & M_SUP_L --> S4
+    M_SEMI_S & M_SEMI_M & M_SEMI_L --> S4
+    M_UNSUP_S & M_UNSUP_M & M_UNSUP_L --> S4
+
+    %% ══════════════════════════════════════════
+    %% STEP 4: 可解释性要求
+    %% ══════════════════════════════════════════
+    subgraph S4_BOX["Step 4 ── 可解释性要求"]
+        direction TB
+        S4{"可解释性\n要求级别"}
+
+        S4 -->|"监管硬要求"| XAI_HARD["评分卡 / 决策树\n白盒模型"]
+        S4 -->|"内部风控审查"| XAI_INT["XGBoost + SHAP\n特征重要性可视化"]
+        S4 -->|"无解释需求"| XAI_NONE["任意高性能模型\n以 PR-AUC 为主指标 ⚠️"]
+
+        XAI_HARD & XAI_INT & XAI_NONE --> AUD{"受众\n分层？"}
+        AUD -->|"合规团队\n效果优先"| AUD_COMP["效果优先模型\n+ 聚合统计报告"]
+        AUD -->|"被标记员工\n需要解释"| AUD_EMP["强解释性模型\n共享同一特征工程"]
+    end
+
+    AUD_COMP & AUD_EMP --> ARCH
+
+    %% ══════════════════════════════════════════
+    %% 三层生产架构
+    %% ══════════════════════════════════════════
+    subgraph ARCH_BOX["三层生产架构"]
+        direction TB
+        ARCH["⚙️ 生产部署"]
+
+        ARCH --> L1
+        L1["Layer 1 规则引擎\n明确违规 → 直接送人工审核"] --> L1_OUT["🔴 人工审核队列"]
+
+        L1 --> L2
+        L2["Layer 2 无监督初筛\nIF + LOF → 高风险候选集"] --> L2_OUT["🟡 高风险候选集"]
+
+        L2_OUT --> L3
+        L3["Layer 3 有监督精排\n按数据量选模型"] --> L3_OUT["🟢 审核优先级列表"]
+
+        L3_OUT --> THR["阈值协调\n从审核团队日处理量倒推\n各层候选集大小 ⚠️"]
+    end
+
+    L1_OUT & L3_OUT & THR --> END([输出：审核优先级列表\n+ 模型解释报告])
+
+    %% ══════════════════════════════════════════
+    %% 关键注意事项（底部注释节点）
+    %% ══════════════════════════════════════════
+    subgraph WARN_BOX["关键注意事项 ⚠️"]
+        direction LR
+        W1["异常率 < 1%\n不要直接纯监督"]
+        W2["用 PR-AUC\n不用 ROC-AUC"]
+        W3["按时间切分\n不要随机 split"]
+        W4["先对齐运营容量\n再定阈值"]
+    end
+
+    %% ══════════════════════════════════════════
+    %% 样式定义
+    %% ══════════════════════════════════════════
+    classDef startEnd fill:#1a1a2e,stroke:#e94560,color:#fff,rx:20
+    classDef stepHeader fill:#16213e,stroke:#0f3460,color:#e2e2e2,font-weight:bold
+    classDef decision fill:#0f3460,stroke:#e94560,color:#fff
+    classDef modelNode fill:#533483,stroke:#e94560,color:#fff
+    classDef warningNode fill:#b5451b,stroke:#ff6b35,color:#fff,font-weight:bold
+    classDef outputNode fill:#0b6e4f,stroke:#08a045,color:#fff
+    classDef archNode fill:#1b4332,stroke:#52b788,color:#e2e2e2
+    classDef warnBox fill:#3d1a00,stroke:#ff6b35,color:#ffd6a5
+
+    class START,END startEnd
+    class S0,S1,S2,S3_SUP,S3_SEMI,S3_UNSUP,S4,ARCH stepHeader
+    class Q1,Q2,Q3,D_FEAT,IMB,VOL_SUP,VOL_SEMI,VOL_UNSUP,AUD decision
+    class M_SUP_S,M_SUP_M,M_SUP_L,M_SEMI_S,M_SEMI_M,M_SEMI_L,M_UNSUP_S,M_UNSUP_M,M_UNSUP_L modelNode
+    class IMB_SEV,XAI_NONE,THR,CAP warningNode
+    class L1_OUT,L2_OUT,L3_OUT outputNode
+    class L1,L2,L3 archNode
+    class W1,W2,W3,W4 warnBox
