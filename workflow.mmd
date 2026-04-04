@@ -6,11 +6,11 @@ flowchart TD
     START([开始：金融风控建模需求]) --> S0
 
     %% ══════════════════════════════════════════
-    %% STEP 0: 业务目标与运营约束
+    %% STEP 0: 业务上下文与约束
     %% ══════════════════════════════════════════
-    subgraph S0_BOX["Step 0 ── 业务目标与运营约束"]
+    subgraph S0_BOX["Step 0 ── 业务上下文与约束"]
         direction TB
-        S0["业务目标与运营约束\n三个关键问题"]
+        S0["业务上下文与约束\n四个关键问题"]
 
         S0 --> Q1{"误报 vs 漏报\n哪个代价更高？"}
         Q1 -->|"费用报销场景"| OPT_P["优化 Precision\n（控制误报）"]
@@ -19,9 +19,15 @@ flowchart TD
         OPT_P & OPT_R --> Q2{"审核团队\n日处理量？"}
         Q2 --> CAP["决定阈值上限\n→ 先对齐运营容量再定阈值⚠️"]
 
-        CAP --> Q3{"监管 / 审计\n硬性要求？"}
-        Q3 -->|"有"| HARD_XAI["可解释性硬约束\n排除黑盒模型"]
-        Q3 -->|"无"| TRADEOFF["可在效果与\n解释性间权衡"]
+        CAP --> Q3{"模型输出需要\n解释给谁看？"}
+        Q3 -->|"内部团队（风控/合规）\n看排序"| AUD_COMP["效果优先\nXGBoost + SHAP"]
+        Q3 -->|"向被标记员工\n解释原因"| AUD_EMP["强解释性\n评分卡 / 规则输出"]
+        Q3 -->|"两者都需要"| AUD_BOTH["共享特征工程\n分别训练两个模型"]
+        Q3 -->|"纯内部预测\n无解释需求"| AUD_NONE["无限制"]
+
+        AUD_COMP & AUD_EMP & AUD_BOTH & AUD_NONE --> Q4{"需要出具正式审计报告\n或接受外部监管检查？"}
+        Q4 -->|"有"| HARD_XAI["可解释性硬约束\n启用双轨架构：\n效果轨（最优模型）+\n解释轨（评分卡/EBM/决策树）"]
+        Q4 -->|"无"| TRADEOFF["单轨即可\n最优模型 + SHAP"]
     end
 
     HARD_XAI & TRADEOFF --> S1
@@ -71,10 +77,10 @@ flowchart TD
         IMB -->|"1%–5%\n中度不平衡"| IMB_MOD["SMOTE + class_weight"]
         IMB -->|"< 1%\n严重不平衡"| IMB_SEV["⚠️ 勿直接纯监督！\nIsolation Forest 初筛\n→ 监督精排（关键反直觉规则）"]
 
-        IMB_MILD & IMB_MOD & IMB_SEV --> VOL_SUP{"数据量"}
+        IMB_MILD & IMB_MOD & IMB_SEV --> VOL_SUP{"数据量\n（双轨时分别选模型）"}
         VOL_SUP -->|"< 5K"| M_SUP_S["评分卡（WOE+LR）"]
-        VOL_SUP -->|"5K – 10万"| M_SUP_M["XGBoost + SHAP"]
-        VOL_SUP -->|"> 10万"| M_SUP_L["GBDT + LR 双层\n/ 深度模型"]
+        VOL_SUP -->|"5K – 10万"| M_SUP_M["XGBoost + SHAP\n双轨解释轨: EBM"]
+        VOL_SUP -->|"> 10万"| M_SUP_L["GBDT + LR 双层\n双轨解释轨: EBM"]
 
         %% --- 半监督路径 ---
         S3_SEMI["半监督路径：跳过不平衡检查"]
@@ -91,27 +97,9 @@ flowchart TD
         VOL_UNSUP -->|"> 10万"| M_UNSUP_L["Autoencoder\n/ DAGMM"]
     end
 
-    M_SUP_S & M_SUP_M & M_SUP_L --> S4
-    M_SEMI_S & M_SEMI_M & M_SEMI_L --> S4
-    M_UNSUP_S & M_UNSUP_M & M_UNSUP_L --> S4
-
-    %% ══════════════════════════════════════════
-    %% STEP 4: 可解释性要求
-    %% ══════════════════════════════════════════
-    subgraph S4_BOX["Step 4 ── 可解释性要求"]
-        direction TB
-        S4{"可解释性\n要求级别"}
-
-        S4 -->|"监管硬要求"| XAI_HARD["评分卡 / 决策树\n白盒模型"]
-        S4 -->|"内部风控审查"| XAI_INT["XGBoost + SHAP\n特征重要性可视化"]
-        S4 -->|"无解释需求"| XAI_NONE["任意高性能模型\n以 PR-AUC 为主指标 ⚠️"]
-
-        XAI_HARD & XAI_INT & XAI_NONE --> AUD{"受众\n分层？"}
-        AUD -->|"合规团队\n效果优先"| AUD_COMP["效果优先模型\n+ 聚合统计报告"]
-        AUD -->|"被标记员工\n需要解释"| AUD_EMP["强解释性模型\n共享同一特征工程"]
-    end
-
-    AUD_COMP & AUD_EMP --> ARCH
+    M_SUP_S & M_SUP_M & M_SUP_L --> ARCH
+    M_SEMI_S & M_SEMI_M & M_SEMI_L --> ARCH
+    M_UNSUP_S & M_UNSUP_M & M_UNSUP_L --> ARCH
 
     %% ══════════════════════════════════════════
     %% 三层生产架构
@@ -127,7 +115,7 @@ flowchart TD
         L2["Layer 2 无监督初筛\nIF + LOF → 高风险候选集"] --> L2_OUT["🟡 高风险候选集"]
 
         L2_OUT --> L3
-        L3["Layer 3 有监督精排\n按数据量选模型"] --> L3_OUT["🟢 审核优先级列表"]
+        L3["Layer 3 有监督精排\n效果轨 + 解释轨（双轨时）"] --> L3_OUT["🟢 审核优先级列表\n+ 解释报告"]
 
         L3_OUT --> THR["阈值协调\n从审核团队日处理量倒推\n各层候选集大小 ⚠️"]
     end
@@ -156,12 +144,15 @@ flowchart TD
     classDef outputNode fill:#0b6e4f,stroke:#08a045,color:#fff
     classDef archNode fill:#1b4332,stroke:#52b788,color:#e2e2e2
     classDef warnBox fill:#3d1a00,stroke:#ff6b35,color:#ffd6a5
+    classDef audienceNode fill:#2d3a4a,stroke:#4a9eff,color:#fff
 
     class START,END startEnd
-    class S0,S1,S2,S3_SUP,S3_SEMI,S3_UNSUP,S4,ARCH stepHeader
-    class Q1,Q2,Q3,D_FEAT,IMB,VOL_SUP,VOL_SEMI,VOL_UNSUP,AUD decision
+    class S0,S1,S2,S3_SUP,S3_SEMI,S3_UNSUP,ARCH stepHeader
+    class Q1,Q2,Q3,Q4,D_FEAT,IMB,VOL_SUP,VOL_SEMI,VOL_UNSUP decision
     class M_SUP_S,M_SUP_M,M_SUP_L,M_SEMI_S,M_SEMI_M,M_SEMI_L,M_UNSUP_S,M_UNSUP_M,M_UNSUP_L modelNode
-    class IMB_SEV,XAI_NONE,THR,CAP warningNode
+    class IMB_SEV,THR,CAP warningNode
+    class HARD_XAI warningNode
     class L1_OUT,L2_OUT,L3_OUT outputNode
     class L1,L2,L3 archNode
     class W1,W2,W3,W4 warnBox
+    class AUD_COMP,AUD_EMP,AUD_BOTH,AUD_NONE audienceNode
