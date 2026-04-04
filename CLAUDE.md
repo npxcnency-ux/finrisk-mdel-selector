@@ -12,8 +12,8 @@ This is a **Claude Code skill** (not a traditional code project). It provides ML
 - `references/algorithm-matrix.md` — Algorithm recommendation matrix, data readiness impact, imbalance handling strategies, evaluation metric selection
 - `references/pitfalls.md` — Detailed gotchas: label bias, concept drift, time leakage, cold start, operational feasibility, data readiness, multicollinearity, high-cardinality encoding
 - `examples/sample-recommendation.md` — Complete output example showing all 7 recommendation components (includes dual-track consistency check)
-- `evals/evals.json` — 5 evaluation scenarios with assertion-based grading criteria (includes negative assertions)
-- `evals/docs/lessons.md` — Skill authoring best practices (from Anthropic)
+- `evals/evals.json` — 8 evaluation scenarios with assertion-based grading criteria (includes negative assertions)
+- `docs/lessons.md` — Skill authoring best practices (from Anthropic)
 
 ## Key Design Decisions
 

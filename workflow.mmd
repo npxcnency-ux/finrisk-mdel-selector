@@ -1,51 +1,62 @@
 flowchart TD
     %% ─────────────────────────────────────────
-    %% 金融风控 ML 模型选择流程
+    %% 金融风控 ML 模型选择流程（四步选型 + 三层生产架构）
     %% ─────────────────────────────────────────
 
-    START([开始：金融风控建模需求]) --> S0
+    START([开始：金融风控建模需求]) --> PRE
+
+    %% ══════════════════════════════════════════
+    %% 前置澄清
+    %% ══════════════════════════════════════════
+    PRE["前置澄清：确认具体费用类型/业务场景\n差旅报销 / 采购付款 / 招待费 /\n关联交易 / 供应商回扣 等"] --> S0
 
     %% ══════════════════════════════════════════
     %% STEP 0: 业务上下文与约束
     %% ══════════════════════════════════════════
-    subgraph S0_BOX["Step 0 ── 业务上下文与约束"]
+    subgraph S0_BOX["Step 0 ── 业务上下文与约束（含可解释性 → 决定单轨/双轨）"]
         direction TB
         S0["业务上下文与约束\n四个关键问题"]
 
-        S0 --> Q1{"误报 vs 漏报\n哪个代价更高？"}
-        Q1 -->|"费用报销场景"| OPT_P["优化 Precision\n（控制误报）"]
-        Q1 -->|"反欺诈 / 合规场景"| OPT_R["优化 Recall\n（控制漏报）"]
+        S0 --> Q1{"Q1: 误报 vs 漏报\n哪个代价更高？"}
+        Q1 -->|"费用报销场景"| OPT_P["优化 Precision\n调高阈值"]
+        Q1 -->|"反欺诈 / 合规场景"| OPT_R["优化 Recall\n调低阈值"]
 
-        OPT_P & OPT_R --> Q2{"审核团队\n日处理量？"}
-        Q2 --> CAP["决定阈值上限\n→ 先对齐运营容量再定阈值⚠️"]
+        OPT_P & OPT_R --> Q2{"Q2: 审核团队\n日处理量？"}
+        Q2 --> CAP["决定阈值上限\n⚠️ 先对齐运营容量再定阈值"]
 
-        CAP --> Q3{"模型输出需要\n解释给谁看？"}
-        Q3 -->|"内部团队（风控/合规）\n看排序"| AUD_COMP["效果优先\nXGBoost + SHAP"]
-        Q3 -->|"向被标记员工\n解释原因"| AUD_EMP["强解释性\n评分卡 / 规则输出"]
-        Q3 -->|"两者都需要"| AUD_BOTH["共享特征工程\n分别训练两个模型"]
+        CAP --> Q3{"Q3: 模型输出需要\n解释给谁看？"}
+        Q3 -->|"内部团队\n风控/合规看排序"| AUD_COMP["SHAP summary 即可"]
+        Q3 -->|"审核人员\n逐条判断"| AUD_OPS["SHAP top-3 因素\n或规则命中说明"]
+        Q3 -->|"向被标记员工\n解释原因"| AUD_EMP["强解释性\n评分卡/规则输出"]
         Q3 -->|"纯内部预测\n无解释需求"| AUD_NONE["无限制"]
 
-        AUD_COMP & AUD_EMP & AUD_BOTH & AUD_NONE --> Q4{"需要出具正式审计报告\n或接受外部监管检查？"}
-        Q4 -->|"有"| HARD_XAI["可解释性硬约束\n启用双轨架构：\n效果轨（最优模型）+\n解释轨（评分卡/EBM/决策树）"]
-        Q4 -->|"无"| TRADEOFF["单轨即可\n最优模型 + SHAP"]
+        AUD_COMP & AUD_OPS & AUD_EMP & AUD_NONE --> Q4{"Q4: 需要出具正式审计报告\n或接受外部监管检查？"}
+        Q4 -->|"有"| DUAL["启用双轨架构\n效果轨: 最优模型（不受限）\n解释轨: 评分卡/EBM/决策树\n共享特征工程"]
+        Q4 -->|"无"| SINGLE["单轨部署\n最优模型 + SHAP 辅助解释"]
     end
 
-    HARD_XAI & TRADEOFF --> S1
+    DUAL & SINGLE --> S1
 
     %% ══════════════════════════════════════════
     %% STEP 1: 数据就绪度评估
     %% ══════════════════════════════════════════
     subgraph S1_BOX["Step 1 ── 数据就绪度评估"]
         direction TB
-        S1["检查：可用特征数量 / 缺失率\n时间字段可靠性 / 类别特征基数 / 稀疏度"]
+        S1["检查项：\n特征数量（衍生后）/ 缺失率 / 时间字段\n数据时间跨度 / 类别特征基数 / 稀疏度"]
 
-        S1 --> D_FEAT{"特征数量\n与质量"}
-        D_FEAT -->|"特征 < 5\n且质量差"| RULE_ONLY["仅使用规则引擎\n退出建模流程 🚫"]
-        D_FEAT -->|"特征 5–15"| FEW_FEAT["可建模\n限制模型复杂度"]
-        D_FEAT -->|"特征 > 15\n且质量好"| RICH_FEAT["无限制\n可选高复杂度模型"]
+        S1 --> FE_NOTE["注意：不要只看原始字段数\n4 个原始字段可衍生 10+ 有效特征\n红线卡的是衍生后的有效特征数"]
+
+        FE_NOTE --> D_FEAT{"衍生后\n有效特征数与质量"}
+        D_FEAT -->|"特征 < 5\n且质量差"| RULE_ONLY["仅使用规则引擎\n退出建模流程"]
+        D_FEAT -->|"特征 5–15"| FEW_FEAT["可建模\n限制复杂度（树深度≤5）"]
+        D_FEAT -->|"特征 > 15\n且质量好"| RICH_FEAT["无限制\n按后续步骤选型"]
+
+        S1 --> TIME_CHECK{"数据时间跨度\n< 12 个月？"}
+        TIME_CHECK -->|"是"| TIME_WARN["⚠️ 无法学到季节性模式\n需说明局限性或等数据积累"]
+        TIME_CHECK -->|"否"| TIME_OK["时间跨度充足"]
     end
 
-    RULE_ONLY --> RULE_AUDIT["直接送人工审核"]
+    RULE_ONLY --> RULE_AUDIT["直接送人工审核\n（不进入建模流程）"]
     FEW_FEAT & RICH_FEAT --> S2
 
     %% ══════════════════════════════════════════
@@ -55,49 +66,74 @@ flowchart TD
         direction TB
         S2{"标签状态？"}
         S2 -->|"有审核确认标签"| SUP["监督学习路径"]
-        S2 -->|"弱标签（疑似未确认）"| SEMI["半监督路径\n伪标签 + 置信度过滤"]
+        S2 -->|"弱标签\n（疑似未确认）"| SEMI["半监督路径"]
         S2 -->|"无标注"| UNSUP["无监督路径"]
+
+        SEMI --> SEMI_CHECK["快速指引：IF 对全量打异常分\n检查弱标签是否集中在高异常分区域"]
+        SEMI_CHECK --> SEMI_CONC{"弱标签集中在\n高异常分区域？"}
+        SEMI_CONC -->|"集中 → 标签有可信度"| SEMI_ST["Self-Training 迭代扩充\n⚠️ 弱标签 < 200 条不建议监督训练"]
+        SEMI_CONC -->|"分散 → 标签质量存疑"| SEMI_UNSUP["优先走无监督路径\n安排人工抽样验证"]
     end
 
     SUP --> S3_SUP
-    SEMI --> S3_SEMI
+    SEMI_ST --> S3_SEMI
+    SEMI_UNSUP --> S3_UNSUP
     UNSUP --> S3_UNSUP
 
     %% ══════════════════════════════════════════
     %% STEP 3: 数据量与不平衡联合评估
     %% ══════════════════════════════════════════
-    subgraph S3_BOX["Step 3 ── 数据量 × 不平衡联合评估"]
+    subgraph S3_BOX["Step 3 ── 数据量 × 不平衡联合评估（核心：有效异常样本数 = 总量 × 异常率）"]
         direction TB
 
         %% --- 监督路径 ---
         S3_SUP["监督路径：评估不平衡程度"]
         S3_SUP --> IMB{"异常率？"}
 
-        IMB -->|"5%–20%\n轻度不平衡"| IMB_MILD["class_weight='balanced'"]
-        IMB -->|"1%–5%\n中度不平衡"| IMB_MOD["SMOTE + class_weight"]
-        IMB -->|"< 1%\n严重不平衡"| IMB_SEV["⚠️ 勿直接纯监督！\nIsolation Forest 初筛\n→ 监督精排（关键反直觉规则）"]
+        IMB -->|"> 20%"| IMB_HIGH["⚠️ 先检查标签定义\n是否过于宽松\n确认合理后无需特殊处理"]
+        IMB -->|"5%–20%"| IMB_MILD{"有效异常\n样本数？"}
+        IMB -->|"1%–5%"| IMB_MOD{"有效异常\n样本数？"}
+        IMB -->|"< 1%"| IMB_SEV["⚠️ 严重不平衡\n勿直接纯监督！\nIF 初筛扩召回 → 监督精排"]
 
-        IMB_MILD & IMB_MOD & IMB_SEV --> VOL_SUP{"数据量\n（双轨时分别选模型）"}
-        VOL_SUP -->|"< 5K"| M_SUP_S["评分卡（WOE+LR）"]
-        VOL_SUP -->|"5K – 10万"| M_SUP_M["XGBoost + SHAP\n双轨解释轨: EBM"]
-        VOL_SUP -->|"> 10万"| M_SUP_L["GBDT + LR 双层\n双轨解释轨: EBM"]
+        IMB_MILD -->|"> 500"| MILD_OK["class_weight='balanced'"]
+        IMB_MILD -->|"< 500"| MILD_LOW["class_weight + 限制复杂度\n（树深度≤5）"]
+
+        IMB_MOD -->|"> 500"| MOD_OK["SMOTE + class_weight"]
+        IMB_MOD -->|"< 500"| MOD_LOW["SMOTE + class_weight\n+ 限制复杂度\n考虑半监督路径补充"]
+
+        IMB_HIGH & MILD_OK & MILD_LOW & MOD_OK & MOD_LOW & IMB_SEV --> SAMPLE_CHECK{"有效异常样本\n< 200 条？"}
+        SAMPLE_CHECK -->|"是"| SAMPLE_WARN["⚠️ 监督模型难学到稳定模式\n优先半监督 或 评分卡/浅层决策树"]
+        SAMPLE_CHECK -->|"否"| SAMPLE_OK["样本量充足"]
+
+        SAMPLE_WARN & SAMPLE_OK --> VOL_SUP{"数据量\n（效果轨模型选择）"}
+        VOL_SUP -->|"< 5K"| M_SUP_S["效果轨: 评分卡 WOE+LR\n或决策树（深度≤5）"]
+        VOL_SUP -->|"5K – 10万"| M_SUP_M["效果轨: XGBoost + SHAP"]
+        VOL_SUP -->|"> 10万"| M_SUP_L["效果轨: GBDT + LR 两阶段"]
+
+        M_SUP_S & M_SUP_M & M_SUP_L --> DUAL_CHECK{"Step 0 启用\n双轨架构？"}
+        DUAL_CHECK -->|"是"| XAI_TRACK["解释轨模型选择"]
+        DUAL_CHECK -->|"否（单轨）"| SKIP_XAI["单轨: 效果模型 + SHAP"]
+
+        XAI_TRACK --> XAI_VOL{"数据量"}
+        XAI_VOL -->|"< 5K"| XAI_S["解释轨: 评分卡/决策树（深度≤5）"]
+        XAI_VOL -->|"≥ 5K"| XAI_L["解释轨: EBM（GA²M）优先\n备选: 评分卡"]
 
         %% --- 半监督路径 ---
-        S3_SEMI["半监督路径：跳过不平衡检查"]
+        S3_SEMI["半监督路径"]
         S3_SEMI --> VOL_SEMI{"数据量"}
         VOL_SEMI -->|"< 5K"| M_SEMI_S["标签传播 + LR"]
-        VOL_SEMI -->|"5K – 10万"| M_SEMI_M["Self-Training\n+ XGBoost"]
-        VOL_SEMI -->|"> 10万"| M_SEMI_L["半监督 GNN\n/ 伪标签迭代"]
+        VOL_SEMI -->|"5K – 10万"| M_SEMI_M["Self-Training + XGBoost"]
+        VOL_SEMI -->|"> 10万"| M_SEMI_L["伪标签迭代"]
 
         %% --- 无监督路径 ---
         S3_UNSUP["无监督路径：仅评估数据量"]
         S3_UNSUP --> VOL_UNSUP{"数据量"}
         VOL_UNSUP -->|"< 5K"| M_UNSUP_S["IF + LOF"]
-        VOL_UNSUP -->|"5K – 10万"| M_UNSUP_M["IF + LOF\n/ DBSCAN"]
-        VOL_UNSUP -->|"> 10万"| M_UNSUP_L["Autoencoder\n/ DAGMM"]
+        VOL_UNSUP -->|"5K – 10万"| M_UNSUP_M["IF + LOF / DBSCAN"]
+        VOL_UNSUP -->|"> 10万"| M_UNSUP_L["Autoencoder（重构误差）"]
     end
 
-    M_SUP_S & M_SUP_M & M_SUP_L --> ARCH
+    XAI_S & XAI_L & SKIP_XAI --> ARCH
     M_SEMI_S & M_SEMI_M & M_SEMI_L --> ARCH
     M_UNSUP_S & M_UNSUP_M & M_UNSUP_L --> ARCH
 
@@ -109,28 +145,46 @@ flowchart TD
         ARCH["⚙️ 生产部署"]
 
         ARCH --> L1
-        L1["Layer 1 规则引擎\n明确违规 → 直接送人工审核"] --> L1_OUT["🔴 人工审核队列"]
+        L1["Layer 1 规则引擎\n明确违规 → 直接送人工审核\n⚠️ 训练集需排除规则已命中样本"] --> L1_OUT["🔴 人工审核队列"]
 
         L1 --> L2
         L2["Layer 2 无监督初筛\nIF + LOF → 高风险候选集"] --> L2_OUT["🟡 高风险候选集"]
 
         L2_OUT --> L3
-        L3["Layer 3 有监督精排\n效果轨 + 解释轨（双轨时）"] --> L3_OUT["🟢 审核优先级列表\n+ 解释报告"]
+        L3["Layer 3 有监督精排"]
+        L3 --> L3_PERF["效果轨: 按数据量选最优模型\n输出风险概率排序"]
+        L3 --> L3_XAI["解释轨（仅双轨时）:\n评分卡 / EBM\n生成监管可接受的书面归因"]
 
-        L3_OUT --> THR["阈值协调\n从审核团队日处理量倒推\n各层候选集大小 ⚠️"]
+        L3_PERF & L3_XAI --> CONSISTENCY{"双轨一致性校验\nTop-K 重叠率"}
+        CONSISTENCY -->|"≥ 70%"| CONS_OK["一致性通过"]
+        CONSISTENCY -->|"< 70%"| CONS_WARN["⚠️ 需排查:\n特征压缩/丢弃？\n某类异常单轨独有？\n人工审查差异样本"]
+
+        CONS_OK & CONS_WARN --> L3_OUT["🟢 审核优先级列表\n+ 解释报告（双轨时）"]
+
+        L3_OUT --> THR["阈值协调\n从审核团队日处理量（Step 0）\n倒推各层候选集大小"]
     end
 
-    L1_OUT & L3_OUT & THR --> END([输出：审核优先级列表\n+ 模型解释报告])
+    L1_OUT & L3_OUT & THR --> END([输出：审核优先级列表 + 模型解释报告])
 
     %% ══════════════════════════════════════════
-    %% 关键注意事项（底部注释节点）
+    %% 冷启动说明
     %% ══════════════════════════════════════════
-    subgraph WARN_BOX["关键注意事项 ⚠️"]
+    subgraph COLD_BOX["冷启动流程"]
         direction LR
-        W1["异常率 < 1%\n不要直接纯监督"]
-        W2["用 PR-AUC\n不用 ROC-AUC"]
-        W3["按时间切分\n不要随机 split"]
-        W4["先对齐运营容量\n再定阈值"]
+        COLD["冷启动时 Layer 3 缺席\n规则 + 无监督先跑\n人工审核积累标签后\n再补充监督模型"]
+    end
+
+    %% ══════════════════════════════════════════
+    %% 关键 Gotchas
+    %% ══════════════════════════════════════════
+    subgraph WARN_BOX["关键 Gotchas ⚠️"]
+        direction LR
+        W1["#1 异常率<1%\n不要直接纯监督"]
+        W2["#2 用 PR-AUC\n不用 ROC-AUC"]
+        W3["#3 按时间切分\n不要随机 split"]
+        W4["#4 先对齐运营容量\n再定阈值"]
+        W5["#9 训练集排除\n规则已命中样本"]
+        W6["#10 有效异常<200\n不要默认 XGBoost"]
     end
 
     %% ══════════════════════════════════════════
@@ -145,14 +199,20 @@ flowchart TD
     classDef archNode fill:#1b4332,stroke:#52b788,color:#e2e2e2
     classDef warnBox fill:#3d1a00,stroke:#ff6b35,color:#ffd6a5
     classDef audienceNode fill:#2d3a4a,stroke:#4a9eff,color:#fff
+    classDef dualTrack fill:#4a1942,stroke:#c850c0,color:#fff
+    classDef noteNode fill:#2d3a4a,stroke:#6c757d,color:#e2e2e2
 
     class START,END startEnd
-    class S0,S1,S2,S3_SUP,S3_SEMI,S3_UNSUP,ARCH stepHeader
-    class Q1,Q2,Q3,Q4,D_FEAT,IMB,VOL_SUP,VOL_SEMI,VOL_UNSUP decision
+    class S0,S1,S3_SUP,S3_SEMI,S3_UNSUP,ARCH stepHeader
+    class Q1,Q2,Q3,Q4,D_FEAT,IMB,IMB_MILD,IMB_MOD,VOL_SUP,VOL_SEMI,VOL_UNSUP,XAI_VOL,DUAL_CHECK,SAMPLE_CHECK,SEMI_CONC,TIME_CHECK decision
     class M_SUP_S,M_SUP_M,M_SUP_L,M_SEMI_S,M_SEMI_M,M_SEMI_L,M_UNSUP_S,M_UNSUP_M,M_UNSUP_L modelNode
-    class IMB_SEV,THR,CAP warningNode
-    class HARD_XAI warningNode
+    class IMB_SEV,IMB_HIGH,CAP,THR,SAMPLE_WARN,TIME_WARN,CONS_WARN warningNode
+    class DUAL,XAI_TRACK,XAI_S,XAI_L,L3_XAI,CONSISTENCY dualTrack
     class L1_OUT,L2_OUT,L3_OUT outputNode
-    class L1,L2,L3 archNode
-    class W1,W2,W3,W4 warnBox
-    class AUD_COMP,AUD_EMP,AUD_BOTH,AUD_NONE audienceNode
+    class L1,L2,L3,L3_PERF archNode
+    class W1,W2,W3,W4,W5,W6 warnBox
+    class AUD_COMP,AUD_OPS,AUD_EMP,AUD_NONE audienceNode
+    class PRE,FE_NOTE,COLD,S2 noteNode
+    class RULE_ONLY warningNode
+    class SINGLE,SKIP_XAI noteNode
+    class CONS_OK outputNode
